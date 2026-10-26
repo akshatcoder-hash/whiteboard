@@ -14,6 +14,7 @@ import type {
   ReviewDisposable,
   ReviewSidebarSectionHandle,
   ReviewSidebarSectionProps,
+  ReviewTheme,
 } from "@dev.fast/review-protocol";
 import * as stylex from "@stylexjs/stylex";
 import {
@@ -44,7 +45,7 @@ import { ReviewTopBar } from "./review-top-bar";
 import { SettingsPage } from "./settings-page";
 import { shellStyles } from "./shell-styles";
 import { ReviewSidebarSection } from "./sidebar-sections";
-import { themeStyles } from "./theme-styles";
+import { themeClass, themeStyles } from "./theme-styles";
 import { tokens } from "./tokens.stylex";
 import { Whiteboard, preloadBoardEditor } from "./whiteboard";
 
@@ -316,16 +317,11 @@ function themedRoot(container: HTMLElement) {
   const themeHost = container.ownerDocument.createElement("div");
 
   // Recomposed on every change so StyleX settles vars against light.
-  const applyTheme = (theme: "dark" | "light") => {
-    const light = theme === "light";
-
+  const applyTheme = (theme: ReviewTheme) => {
     themeHost.className = [
-      light && "review-app--theme-light",
-      stylex.props(
-        themeStyles.vars,
-        styles.themeHost,
-        light && themeStyles.light,
-      ).className,
+      theme === "light" && "review-app--theme-light",
+      stylex.props(themeStyles.vars, styles.themeHost, themeClass(theme))
+        .className,
     ]
       .filter(Boolean)
       .join(" ");
@@ -347,7 +343,7 @@ function themedRoot(container: HTMLElement) {
 
 function followWorkbenchTheme(
   container: HTMLElement,
-  applyTheme: (theme: "dark" | "light") => void,
+  applyTheme: (theme: ReviewTheme) => void,
 ) {
   applyTheme(workbenchColorTheme(container));
   const workbench = container.ownerDocument.querySelector(".monaco-workbench");
