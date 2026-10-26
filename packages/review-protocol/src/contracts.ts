@@ -1156,6 +1156,8 @@ export interface ReviewCanvasHandle extends ReviewDisposable {
   update(content: ReviewCanvasContent): void;
   focus(): void;
   showFind(seed?: string): boolean;
+  /** False when find is closed. */
+  navigateFind(delta: 1 | -1): boolean;
   /** Undefined when the canvas shows no review. */
   diffFiles(): Promise<readonly ReviewDiffFileWire[]> | undefined;
   revealDiffFile(path: string): void;
