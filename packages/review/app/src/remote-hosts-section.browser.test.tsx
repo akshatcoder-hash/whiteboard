@@ -59,6 +59,7 @@ async function render(hosts: ReviewRemoteHostsSettings) {
     appearance: {
       documentFontSize: 15,
       readingFont: "serif",
+      readingFontFamily: "",
       codeFontSize: 13,
       codeFontFamily: "Geist Mono",
       fontLigatures: false,
