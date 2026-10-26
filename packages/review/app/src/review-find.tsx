@@ -31,6 +31,7 @@ import { setCssHighlight } from "./css-highlights";
 import type { ReviewClientConfig } from "./host/review-client";
 import { useOptionalReviewSession } from "./host/review-session";
 import { compileReviewFindQuery } from "./review-find-query";
+import { bindFindNavigation } from "./review-find-shortcuts";
 import {
   type ReviewFindMatch,
   createReviewFindStore,
@@ -404,6 +405,12 @@ function ReviewFindWidget({
   useEffect(() => {
     setOverlayHost(shellRef?.current ?? null);
   });
+
+  useEffect(() => {
+    if (!open || !overlayHost) return;
+
+    return bindFindNavigation(overlayHost, controller.navigate);
+  }, [open, overlayHost, controller]);
 
   if (!open || !overlayHost) return null;
 

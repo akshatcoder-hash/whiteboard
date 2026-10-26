@@ -44,6 +44,60 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
+it("navigates with Cmd+G outside the search field and releases the shortcut when closed", async () => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const host = createReviewFindHost();
+  root = createRoot(container);
+  await act(async () =>
+    root?.render(
+      <FindHarness host={host} handles={[findHandle(), findHandle()]} />,
+    ),
+  );
+
+  const press = async (key: string, modifiers: KeyboardEventInit = {}) => {
+    const event = new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...modifiers,
+    });
+
+    await act(async () => {
+      container.querySelector("article")!.dispatchEvent(event);
+    });
+
+    return event.defaultPrevented;
+  };
+
+  expect(await press("g", { metaKey: true })).toBe(false);
+  await act(async () => {
+    host.showFind("Alpha");
+  });
+  await vi.waitFor(() =>
+    expect(findCount(container)?.textContent).toBe("1 of 4"),
+  );
+  expect(await press("g", { metaKey: true })).toBe(true);
+  expect(findCount(container)?.textContent).toBe("2 of 4");
+  expect(await press("G", { metaKey: true, shiftKey: true })).toBe(true);
+  expect(findCount(container)?.textContent).toBe("1 of 4");
+  await press("g", { metaKey: true, shiftKey: true });
+  expect(findCount(container)?.textContent).toBe("4 of 4");
+
+  for (const modifiers of [
+    {},
+    { ctrlKey: true },
+    { metaKey: true, altKey: true },
+    { metaKey: true, isComposing: true },
+  ]) {
+    expect(await press("g", modifiers)).toBe(false);
+    expect(findCount(container)?.textContent).toBe("4 of 4");
+  }
+
+  await act(async () => host.hideFind());
+  expect(await press("g", { metaKey: true })).toBe(false);
+});
+
 it("orders duplicate editors with MDX and wraps navigation", async () => {
   const first = findHandle();
   const second = findHandle();
