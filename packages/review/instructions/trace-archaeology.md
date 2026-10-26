@@ -15,6 +15,11 @@ Before hosted setup, explain: full transcripts go to the chosen origin. Writers 
 FFF setup is human-owned. If FFF is unavailable, report the setup gap. Do not replace or reconfigure it.
 
 Local commit trailers and blame resolution work without trace storage access.
+Without a configured store, `trace pull` discovers local Claude Code, Codex,
+and Pi transcripts for the current working directory, including sessions with
+no commit trailers. `trace pull --agent-session <id>` and `trace show <id>`
+read those raw transcripts directly. Pull refreshes the normalized search files;
+it does not upload transcripts or require capture hooks, login, or a Git remote.
 Read commands use the machine's selected trace store. When both an S3/R2
 bucket and the hosted store are configured, add `--storage s3|hosted` to
 read the other one; it changes nothing about capture or consent.
@@ -111,3 +116,21 @@ This flow is complete when you inspected the source events and checked the resul
 - Cite session, trace, and event locators for event evidence.
 - Cite commit IDs and source lines for current code evidence.
 - Report missing or uncertain provenance. Never invent an explanation.
+
+## Place findings where they explain the change
+
+Separate the result into two kinds of context:
+
+- **Requirements and verification:** retain the user's requested behavior in
+  their own words and attach exact session, trace, and event evidence to each
+  claim. A request is not proof that it was implemented. For verification, cite
+  the observed command and result, and state what remains unverified. Omit a
+  requirements section when there are no supported requirements to report.
+- **Architecture and guidance:** place the rationale beside the design or
+  diagram it explains, or in the relevant file lens or component. Cite the
+  source event and check that the current code still follows that decision.
+  Do not turn implementation suggestions into user requirements.
+
+Keep evidence next to its claim instead of collecting unrelated trace excerpts
+in a requirements preamble. If later events supersede an earlier decision,
+explain the change and cite the final decision; mark uncertainty explicitly.
