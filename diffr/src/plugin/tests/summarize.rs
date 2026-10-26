@@ -208,6 +208,22 @@ fn long_summaries_are_discarded_without_changing_initial_folding() {
 }
 
 #[test]
+fn a_higher_length_ratio_keeps_a_long_summary() {
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let (endpoint, server) = serve(vec![(200, gemini_answer("a()\nb()\nc()"))]);
+    let pipeline = summarizer_with(json!({
+        "api_key": "test",
+        "endpoint": endpoint,
+        "min_lines": 3,
+        "retries": 0,
+        "max_length_ratio": 100.0,
+    }));
+    shape(&pipeline, &file, &mut sides).unwrap();
+    server.join().unwrap();
+    assert_eq!(fold_label(&sides), "a()\nb()\nc()");
+}
+
+#[test]
 fn summaries_collapse_selected_folds_behind_pseudocode() {
     let (file, mut sides) = project("a.py", "", LARGE);
     let (endpoint, server) = serve(vec![(200, gemini_answer("a b c"))]);
@@ -318,7 +334,7 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
         (
             "anthropic",
             "",
-            json!({"content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "a b c"}]}),
+            json!({"content": [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": "```pseudo\na b c\n```"}]}),
             "x-api-key: test-key",
         ),
     ] {
@@ -366,6 +382,34 @@ fn each_provider_sends_its_own_request_and_reads_its_own_answer() {
             }
         }
     }
+}
+
+#[test]
+fn codex_streams_a_response_and_reads_the_completed_event() {
+    let (file, mut sides) = project("a.py", "", LARGE);
+    let completed = json!({"type": "response.completed", "response": {"output": [
+        {"type": "reasoning", "summary": []},
+        {"type": "message", "content": [{"type": "output_text", "text": "a b c"}]},
+    ]}});
+    let stream = format!(
+        "event: response.created\ndata: {{\"type\":\"response.created\"}}\n\nevent: response.completed\ndata: {completed}\n\n"
+    );
+    let (endpoint, server) = serve_requests(vec![(200, stream)]);
+    let pipeline = summarizer_with(json!({
+        "provider": "codex",
+        "model": "test-model",
+        "api_key": "test-token",
+        "endpoint": format!("{endpoint}/codex"),
+        "min_lines": 3,
+        "retries": 0,
+    }));
+    shape(&pipeline, &file, &mut sides).unwrap();
+    assert_eq!(fold_label(&sides), "a b c");
+    let request = server.join().unwrap().remove(0);
+    assert_eq!(request.line, "POST /codex/responses HTTP/1.1");
+    assert!(request
+        .headers
+        .contains(&"authorization: bearer test-token".to_owned()));
 }
 
 /// The default chain with the summarizer on, answering from `endpoint`.

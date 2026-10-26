@@ -40,14 +40,15 @@ use. The bundled plugins' settings:
 | `deleted-bodies.min_lines` | 12 | Deleted bodies shorter than this stay open. |
 | `removed-runs.min_lines` | 5 | Removed stretches shorter than this stay open. |
 | `test-bodies.min_lines` | 3 | Test bodies shorter than this stay open. |
-| `summarize.enabled` | false | LLM pseudocode summaries of large new bodies and tests. Needs a key. |
-| `summarize.provider` | `gemini` | `gemini`, `openai` or `anthropic`. Changing it clears `api_key`. |
+| `summarize.enabled` | false | LLM pseudocode summaries of large new bodies and tests. Needs a key or the Codex sign-in. |
+| `summarize.provider` | `gemini` | `gemini`, `openai`, `anthropic` or `codex`. Changing it clears `api_key`. |
 | `summarize.model` | the provider's | The model name sent to the provider. |
-| `summarize.api_key` | unset | Without it, the provider's variable in the environment is used: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. |
+| `summarize.api_key` | unset | Without it, the provider's variable in the environment is used: `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`. `codex` reads Codex's saved sign-in instead; `diffr config logins` says whether it is ready. |
 | `summarize.endpoint` | the provider's | Another base URL: a proxy, OpenRouter, or a local OpenAI-compatible server with `provider = "openai"`. |
 | `summarize.min_lines` | 20 | New bodies shorter than this are shown as code. |
 | `summarize.tests` | true | Summarize new test bodies too. |
 | `summarize.test_min_lines` | 20 | Shorter test bodies keep their ordinary labels. |
+| `summarize.max_length_ratio` | 0.67 | Pseudocode longer than this fraction of the body is discarded. |
 | `summarize.system_prompt` | built in | The instruction sent with each body. Change it to change the style of the summaries. |
 | `summarize.request_timeout_ms` | 60000 | Timeout for each request. |
 | `summarize.retries` | 3 | Retries after a timeout, rate limit or server error. |

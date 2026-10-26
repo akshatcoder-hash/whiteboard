@@ -28,6 +28,7 @@ pub struct Options {
     pub min_lines: usize,
     pub tests: bool,
     pub test_min_lines: usize,
+    pub max_length_ratio: f64,
     pub api_key: Option<String>,
     pub endpoint: Option<String>,
     pub request_timeout_ms: u64,
@@ -81,7 +82,7 @@ impl Summarize {
         };
         let headers = provider.headers(key);
         let failed = |message: String| anyhow!("{}: {message}", self.options.model);
-        let text: serde_json::Value = {
+        let body = {
             let mut attempt = 0;
             loop {
                 let result = http::post(
@@ -92,10 +93,7 @@ impl Summarize {
                 )
                 .await;
                 let retry = match result {
-                    Ok((status, body)) if (200..300).contains(&status) => {
-                        break serde_json::from_slice(&body)
-                            .map_err(|error| failed(error.to_string()))?;
-                    }
+                    Ok((status, body)) if (200..300).contains(&status) => break body,
                     Ok((status, _)) if status == 429 || status >= 500 => format!("HTTP {status}"),
                     Ok((status, body)) => {
                         return Err(failed(format!(
@@ -116,10 +114,20 @@ impl Summarize {
             }
         };
         let pseudocode = provider
-            .text(&text)
-            .ok_or_else(|| failed("no text in the response".to_owned()))?
-            .trim();
+            .text(&body)
+            .ok_or_else(|| failed("no text in the response".to_owned()))?;
+        let pseudocode = unfenced(pseudocode.trim()).trim();
         Ok((!pseudocode.is_empty()).then(|| pseudocode.to_owned()))
+    }
+}
+
+fn unfenced(text: &str) -> &str {
+    let Some((opening, rest)) = text.split_once('\n') else {
+        return text;
+    };
+    match rest.strip_suffix("```") {
+        Some(inner) if opening.starts_with("```") => inner,
+        _ => text,
     }
 }
 
@@ -145,6 +153,9 @@ fn resolve_key(config: &Options, custom_endpoint: bool) -> Key {
     }
     if config.provider_details.keyless_custom_endpoint && custom_endpoint {
         return Key::NotRequired;
+    }
+    if config.provider_details.login.is_some() {
+        return Key::Missing;
     }
     eprintln!(
         "summarize: off for this run: no API key: set plugins.shape.bundled.summarize.api_key, or {} in the environment, or turn the summarizer off with plugins.shape.bundled.summarize.enabled = false",
@@ -204,10 +215,10 @@ impl GuestPlugin for Summarize {
         else {
             return Ok(false);
         };
-        // Pseudocode earns its place only when it is at most two thirds as
-        // long as the body; otherwise the body keeps its original visibility.
-        let size = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count();
-        if size(&pseudocode) * 3 > size(&text) * 2 {
+        // Pseudocode earns its place only when it is short enough; otherwise
+        // the body keeps its original visibility.
+        let size = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count() as f64;
+        if size(&pseudocode) > size(&text) * self.options.max_length_ratio {
             return Ok(false);
         }
         cursor.set_collapsed(data.id, true)?;

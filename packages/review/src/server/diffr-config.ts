@@ -13,10 +13,12 @@ import {
 } from "@dev.fast/json";
 import {
   type ReviewDiffrConfig,
+  type ReviewDiffrLogin,
   type ReviewDiffrProvider,
   type ReviewDiffrSummarizerInput,
   type StructuralRegion,
   decodeStructuralDiffEvent,
+  reviewDiffrLoginsSchema,
   reviewDiffrSummarizerInputSchema,
 } from "@dev.fast/review-protocol";
 import { stringify } from "smol-toml";
@@ -39,6 +41,7 @@ function serialized<T>(operation: () => Promise<T>): Promise<T> {
 
 type DiffrArguments =
   | { command: "schema" }
+  | { command: "logins" }
   | { command: "show"; reveal: boolean }
   | { command: "set"; patch: JsonObject }
   | { command: "migrate" }
@@ -48,6 +51,8 @@ function diffrArgv(args: DiffrArguments): string[] {
   switch (args.command) {
     case "schema":
       return ["config", "schema"];
+    case "logins":
+      return ["config", "logins"];
     case "show":
       return ["config", "show", "--json", ...(args.reveal ? ["--reveal"] : [])];
     case "set":
@@ -188,6 +193,32 @@ function environmentKey(
     .find((key) => !!key);
 }
 
+function signedIn(
+  providers: ReviewDiffrProvider[],
+  logins: Record<string, ReviewDiffrLogin>,
+  id: string,
+): boolean {
+  const login = providers.find((provider) => provider.id === id)?.login;
+
+  return !!login && !!logins[login]?.ready;
+}
+
+/** Older diffr builds have no sign-ins. */
+async function readLogins(
+  rootPath?: string,
+  signal?: AbortSignal,
+): Promise<Record<string, ReviewDiffrLogin>> {
+  try {
+    const result = reviewDiffrLoginsSchema.safeParse(
+      json(await diffr({ command: "logins" }, rootPath, { signal })),
+    );
+
+    return result.success ? result.data : {};
+  } catch {
+    return {};
+  }
+}
+
 function keyOptional(
   providers: ReviewDiffrProvider[],
   id: string,
@@ -203,27 +234,30 @@ function strings(value: JsonValue | undefined): string[] {
   return Array.isArray(value) ? value.filter(isStringValue) : [];
 }
 
+const summarizeSchema =
+  "properties.plugins.properties.shape.properties.bundled.properties.summarize.properties";
+
+async function readSchema(rootPath?: string): Promise<JsonObject | undefined> {
+  try {
+    return json(await diffr({ command: "schema" }, rootPath));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Defaults supplied by diffr's schema for tag hiding and summary controls.
  * If the schema cannot be read, resolved settings still work.
  */
-async function configDefaults(
-  rootPath?: string,
-): Promise<
-  Pick<ReviewDiffrConfig, "providers" | "defaultPrompt" | "defaultHiddenTags">
+function configDefaults(
+  schema: JsonObject | undefined,
+): Pick<
+  ReviewDiffrConfig,
+  "providers" | "defaultPrompt" | "defaultHiddenTags"
 > {
-  let schema: JsonObject;
+  if (!schema) return {};
 
-  try {
-    schema = json(await diffr({ command: "schema" }, rootPath));
-  } catch {
-    return {};
-  }
-
-  const options = valueAt(
-    schema,
-    "properties.plugins.properties.shape.properties.bundled.properties.summarize.properties",
-  );
+  const options = valueAt(schema, summarizeSchema);
 
   const defaultHiddenTags = strings(
     valueAt(
@@ -246,6 +280,7 @@ async function configDefaults(
     const detail = isJsonObject(details) ? details[id] : undefined;
     const model = isJsonObject(models) ? models[id] : undefined;
     const endpoint = isJsonObject(detail) ? detail.endpoint : undefined;
+    const login = isJsonObject(detail) ? detail.login : undefined;
 
     return {
       id,
@@ -255,6 +290,7 @@ async function configDefaults(
       keyVariables: isJsonObject(detail) ? strings(detail.key_variables) : [],
       keylessCustomEndpoint:
         isJsonObject(detail) && detail.keyless_custom_endpoint === true,
+      ...(isStringValue(login) && { login }),
     };
   });
 
@@ -269,15 +305,19 @@ async function configDefaults(
 
 async function read(rootPath?: string): Promise<ReviewDiffrConfig> {
   const config = await values(rootPath);
-  const defaults = await configDefaults(rootPath);
+  const defaults = configDefaults(await readSchema(rootPath));
+  const logins = await readLogins(rootPath);
+  const providers = defaults.providers ?? [];
   const saved = valueAt(config, `${prefix}.api_key`);
 
   const credentialSource =
     isStringValue(saved) && saved.length > 0
       ? "config"
-      : environmentKey(defaults.providers ?? [], savedProvider(config))
+      : environmentKey(providers, savedProvider(config))
         ? "environment"
-        : "missing";
+        : signedIn(providers, logins, savedProvider(config))
+          ? "login"
+          : "missing";
 
   const plugins = valueAt(config, "plugins.shape");
 
@@ -290,7 +330,7 @@ async function read(rootPath?: string): Promise<ReviewDiffrConfig> {
       if (isJsonObject(plugin)) delete plugin.api_key;
   }
 
-  return { values: config, credentialSource, ...defaults };
+  return { values: config, credentialSource, logins, ...defaults };
 }
 
 export function readDiffrConfig(rootPath?: string): Promise<ReviewDiffrConfig> {
@@ -368,12 +408,19 @@ export function saveDiffrSummarizer(
       !draft.apiKey &&
       !(savedKey && !moving) &&
       !environmentKey(providers, draft.provider) &&
+      !signedIn(providers, current.logins ?? {}, draft.provider) &&
       !keyOptional(providers, draft.provider, draft.endpoint)
     ) {
+      const login = providers.find(
+        (provider) => provider.id === draft.provider,
+      )?.login;
+
       return {
         ...current,
         changed: false,
-        error: "Add an API key before enabling summaries.",
+        error:
+          (login && current.logins?.[login]?.message) ||
+          "Add an API key before enabling summaries.",
       };
     }
 
@@ -421,7 +468,8 @@ export async function testDiffrSummarizer(
       throw new Error("The summarizer is not available in this configuration.");
 
     const { provider, endpoint, model, systemPrompt } = parsed.data;
-    const providers = (await configDefaults(rootPath)).providers ?? [];
+    const schema = await readSchema(rootPath);
+    const providers = configDefaults(schema).providers ?? [];
 
     const variables =
       providers.find((known) => known.id === provider)?.keyVariables ?? [];
@@ -433,7 +481,11 @@ export async function testDiffrSummarizer(
         : "") ||
       environmentKey(providers, provider);
 
-    if (!apiKey && !keyOptional(providers, provider, endpoint))
+    if (
+      !apiKey &&
+      !keyOptional(providers, provider, endpoint) &&
+      !signedIn(providers, await readLogins(rootPath, deadline), provider)
+    )
       throw new Error("Add an API key to test summaries.");
     directory = await mkdtemp(join(tmpdir(), "review-summary-"));
 
@@ -444,6 +496,12 @@ export async function testDiffrSummarizer(
       model,
       ...(systemPrompt.trim() && { system_prompt: systemPrompt }),
       min_lines: 1,
+      ...(schema &&
+        isJsonObject(
+          valueAt(schema, `${summarizeSchema}.max_length_ratio`),
+        ) && {
+          max_length_ratio: 1000,
+        }),
       retries: 0,
       request_timeout_ms: 45_000,
     };
@@ -523,7 +581,7 @@ export async function testDiffrSummarizer(
     }
 
     throw new Error(
-      "No summary was produced. Check the API key, model, and network connection.",
+      "No summary was produced. Check the API key or sign-in, the model, and the network connection.",
     );
   } finally {
     testing = false;
