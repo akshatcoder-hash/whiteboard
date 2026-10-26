@@ -1,14 +1,14 @@
-import { posix } from "node:path";
-
 import { type LensSource, anchorSelection } from "@review/lens-selection.js";
 import type { FileLineRange } from "@review/source.js";
 import {
   type CoverageFile,
   coverageSources,
   scopedCoverage,
+  sourcesForFile,
   subtractIntervals,
   unionIntervals,
 } from "@review/viewed-coverage.js";
+import { Minimatch } from "minimatch";
 
 import type { Lens } from "./diff-lenses.js";
 
@@ -17,8 +17,10 @@ export function uncategorizedSources(
   files: readonly CoverageFile[],
   sources: readonly FileLineRange[],
 ): FileLineRange[] {
+  const own = sourcesForFile(sources);
+
   return files.flatMap((file) => {
-    const covered = scopedCoverage(file, sources);
+    const covered = scopedCoverage(file, own(file));
 
     return coverageSources(file, {
       base: subtractIntervals(file.changed.base, covered.base),
@@ -36,13 +38,17 @@ export function resolveFileLens(
 ) {
   const targets = lens.targets;
 
-  const selected = targets.flatMap((target) =>
-    target.kind === "ranges"
-      ? target.sources.flatMap((source) => resolve(anchorSelection(source)))
-      : files
-          .filter((file) => matchesFileLens(target.patterns, file))
-          .flatMap((file) => fileSources.get(file.path) ?? []),
-  );
+  const selected = targets.flatMap((target) => {
+    if (target.kind === "ranges")
+      return target.sources.flatMap((source) =>
+        resolve(anchorSelection(source)),
+      );
+    const matches = fileLensMatcher(target.patterns);
+
+    return files
+      .filter(matches)
+      .flatMap((file) => fileSources.get(file.path) ?? []);
+  });
 
   const groups = new Map<string, FileLineRange[]>();
 
@@ -63,18 +69,7 @@ export function resolveFileLens(
     })),
   );
 
-  const fileCount = new Set(
-    sources.map(
-      (source) =>
-        files.find(
-          (file) =>
-            source.file ===
-            (source.side === "base"
-              ? (file.previousPath ?? file.path)
-              : file.path),
-        )?.path ?? source.file,
-    ),
-  ).size;
+  const fileCount = new Set(sources.map(changedPath(files))).size;
 
   return {
     sources,
@@ -83,18 +78,46 @@ export function resolveFileLens(
   };
 }
 
+/** The changed file a source names on its side, or the source's own file. */
+export function changedPath(
+  files: readonly CoverageFile[],
+): (source: FileLineRange) => string {
+  const paths = new Map<string, string>();
+
+  for (const file of files)
+    for (const key of [
+      `base:${file.previousPath ?? file.path}`,
+      `head:${file.path}`,
+    ])
+      if (!paths.has(key)) paths.set(key, file.path);
+
+  return (source) => paths.get(`${source.side}:${source.file}`) ?? source.file;
+}
+
 /** Evaluate authored patterns against the changed-file list, never the filesystem. */
-export function matchesFileLens(
+export function fileLensMatcher(
   patterns: readonly string[],
-  file: { path: string; previousPath?: string },
-): boolean {
-  return patterns.some((pattern) => {
+): (file: { path: string; previousPath?: string }) => boolean {
+  const matchers = patterns.map((pattern) => {
     const normalized = pattern.startsWith("./") ? pattern.slice(2) : pattern;
 
-    return [file.path, file.previousPath].some(
-      (path) =>
-        path !== undefined &&
-        (path === normalized || posix.matchesGlob(path, normalized)),
-    );
+    const glob = new Minimatch(normalized, {
+      nocase: process.platform === "darwin" || process.platform === "win32",
+      windowsPathsNoEscape: true,
+      nonegate: true,
+      nocomment: true,
+      optimizationLevel: 2,
+      platform: "linux",
+      nocaseMagicOnly: true,
+    });
+
+    return (path: string) => path === normalized || glob.match(path);
   });
+
+  return (file) =>
+    matchers.some(
+      (matches) =>
+        matches(file.path) ||
+        (file.previousPath !== undefined && matches(file.previousPath)),
+    );
 }
